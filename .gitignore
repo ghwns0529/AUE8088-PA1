@@ -126,3 +126,4 @@ env.bak/
 venv.bak/
 *.deb
 src/imagenet.zip
+datasets/
