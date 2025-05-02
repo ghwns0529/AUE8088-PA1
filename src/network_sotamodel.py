@@ -34,53 +34,75 @@ from src.util import show_setting
 #         x = self.classifier(x)
 #         return x
 
-class ResidualBlock(nn.Module):
-    def __init__(self, channels):
+class InceptionResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.conv1 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
-        self.bn1   = nn.BatchNorm2d(channels)
-        self.relu  = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv2d(channels, channels, kernel_size=3, padding=1, bias=False)
-        self.bn2   = nn.BatchNorm2d(channels)
-    def forward(self, x):
-        identity = x
-        out = self.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        return self.relu(out + identity)
 
-class MyNetwork(AlexNet):
-    def __init__(self, num_classes: int = 200, dropout: float = 0.5):
-        super().__init__(num_classes=num_classes, dropout=dropout)
-
-        self.features = nn.Sequential(
-            nn.Conv2d(3,  64, kernel_size=7, stride=2, padding=3),  
-            nn.BatchNorm2d(64),
-            ResidualBlock(64), 
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 192, kernel_size=5, stride=1, padding=2),
-            nn.BatchNorm2d(192),
-            ResidualBlock(192), 
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
-            nn.Conv2d(192, 384, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(384),
-            ResidualBlock(384), 
-            nn.ReLU(inplace=True),
-            nn.Conv2d(384, 384, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(384),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(384, 256, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+        self.branch1 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
         )
 
+        self.branch3 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        )
 
-        
-        
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.features(x)        
-        x = self.avgpool(x)        
+        self.branch5 = nn.Sequential(
+            nn.Conv2d(in_channels, out_channels, kernel_size=5, padding=2, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True)
+        )
+
+        self.merge = nn.Sequential(
+            nn.Conv2d(out_channels * 3, out_channels, kernel_size=1, padding=0, bias=False),
+            nn.BatchNorm2d(out_channels)
+        )
+
+        self.shortcut = nn.Identity() if in_channels == out_channels else nn.Conv2d(in_channels, out_channels, kernel_size=1)
+
+        self.relu = nn.ReLU(inplace=True)
+
+    def forward(self, x):
+        branch1 = self.branch1(x)
+        branch3 = self.branch3(x)
+        branch5 = self.branch5(x)
+        out = torch.cat([branch1, branch3, branch5], dim=1)  
+        out = self.merge(out)
+        out += self.shortcut(x)
+        return self.relu(out)
+
+class MyNetwork(nn.Module):
+    def __init__(self, num_classes: int = 200):
+        super().__init__()
+
+        self.features = nn.Sequential(
+            nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3),
+            nn.BatchNorm2d(64),
+            nn.ReLU(inplace=True),
+
+            InceptionResidualBlock(64, 64),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+
+            InceptionResidualBlock(64, 128),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+
+            InceptionResidualBlock(128, 256),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+
+            InceptionResidualBlock(256, 384),
+            nn.AdaptiveAvgPool2d((1, 1)),
+        )
+
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.5),
+            nn.Linear(384, num_classes)
+        )
+
+    def forward(self, x):
+        x = self.features(x)
         x = torch.flatten(x, 1)
         x = self.classifier(x)
         return x
